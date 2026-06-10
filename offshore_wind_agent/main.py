@@ -17,7 +17,7 @@ logging.basicConfig(
 logger = logging.getLogger("offshore_wind_agent")
 
 
-def run(dry_run: bool = False, min_score: int = 3, cutoff_days: int = 7):
+def run(dry_run: bool = False, min_score: int = 3, cutoff_days: int = 7, demo: bool = False):
     from storage.database import init_db, save_raw_items, save_processed_item, get_processed_items_for_report, save_report_run
     from sources.rss_collector import collect_all_rss
     from sources.web_scraper import collect_scraped_sources, collect_google_news
@@ -35,13 +35,29 @@ def run(dry_run: bool = False, min_score: int = 3, cutoff_days: int = 7):
     # ── 2. Collect ───────────────────────────────────────────────
     logger.info("Step 1/5: Collecting from information sources...")
     raw_items = []
-    raw_items += collect_all_rss(cutoff_days=cutoff_days)
-    raw_items += collect_scraped_sources()
-    raw_items += collect_google_news()
+    if demo:
+        from demo_data import DEMO_ITEMS
+        raw_items = DEMO_ITEMS
+        logger.info("[demo] Loaded %d sample items", len(raw_items))
+    else:
+        raw_items += collect_all_rss(cutoff_days=cutoff_days)
+        raw_items += collect_scraped_sources()
+        raw_items += collect_google_news()
     logger.info("Collected %d raw items total", len(raw_items))
 
     # ── 3. Deduplicate & save ────────────────────────────────────
     logger.info("Step 2/5: Deduplicating...")
+    if demo:
+        # Always treat demo items as new — reset their DB entries
+        import sqlite3
+        from storage.database import DB_PATH
+        with sqlite3.connect(DB_PATH) as con:
+            for item in raw_items:
+                url = item.get("url", "")
+                if url:
+                    con.execute("DELETE FROM raw_items WHERE url=?", (url,))
+                    con.execute("DELETE FROM processed_items WHERE raw_id IN "
+                                "(SELECT id FROM raw_items WHERE url=?)", (url,))
     new_items = save_raw_items(raw_items)
     logger.info("%d new (unseen) items", len(new_items))
 
@@ -51,7 +67,11 @@ def run(dry_run: bool = False, min_score: int = 3, cutoff_days: int = 7):
 
     # ── 4. Filter + Analyze ──────────────────────────────────────
     logger.info("Step 3/5: LLM filtering and analysis...")
-    if dry_run:
+    if demo:
+        # Demo items already carry pre-written analysis
+        analyzed = [item for item in new_items if "analysis" in item]
+        logger.info("[demo] Using pre-written analysis for %d items", len(analyzed))
+    elif dry_run:
         logger.info("[dry_run] Skipping LLM analysis")
         analyzed = [dict(item, analysis={"title_cn": item["title"], "core_content": item.get("summary", ""),
                                           "impact_analysis": "dry_run", "value_note": "", "tags": [], "value_score": 3})
@@ -106,8 +126,9 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Offshore Wind Intelligence Agent")
     parser.add_argument("--dry-run", action="store_true", help="Skip LLM calls and email")
+    parser.add_argument("--demo", action="store_true", help="Use built-in sample data instead of live collection")
     parser.add_argument("--min-score", type=int, default=3, help="Minimum value score to include (1-5)")
     parser.add_argument("--days", type=int, default=7, help="Collect items from last N days")
     args = parser.parse_args()
 
-    run(dry_run=args.dry_run, min_score=args.min_score, cutoff_days=args.days)
+    run(dry_run=args.dry_run, min_score=args.min_score, cutoff_days=args.days, demo=args.demo)
