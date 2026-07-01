@@ -100,3 +100,27 @@ LLM 按以下维度判断信息价值：
 1. 登录 QQ 邮箱 → 设置 → 账户
 2. 开启 SMTP 服务
 3. 获取授权码（16位）填入 `SMTP_PASS`
+
+## 模型测试（幻觉 / 稳定性 / 输出质量）
+
+`tests/` 目录针对 `processing/analyzer.py` 的 LLM 调用做了三类测试，详见每个文件顶部的说明：
+
+| 测试类型 | 文件 | 方法 |
+|---------|------|------|
+| 输出质量 | `tests/test_quality.py` | JSON schema 校验、中文语言检测、句数校验、离线（demo 数据）+ 在线双层 |
+| 稳定性 | `tests/test_stability.py` | 同一输入重复调用 N 次，检验 value_score 极差、标签 Jaccard 相似度、JSON 解析成功率 |
+| 幻觉 | `tests/test_hallucination.py` | 数字溯源规则检测（原文无数字时输出不应出现数字）+ LLM-as-judge 事实核查 |
+
+金标准测试数据（刻意构造的边界样例）在 `tests/golden_dataset.py`：明显高价值/明显低价值项、无具体数据的稀疏项、主观判断的边界项。
+
+```bash
+pip install -r requirements-dev.txt
+
+# 离线：只跑 schema/格式类测试，不消耗 API 额度
+pytest -m "not llm"
+
+# 在线：跑全部（含真实 LLM 调用），需要 ANTHROPIC_API_KEY
+pytest
+```
+
+未设置 `ANTHROPIC_API_KEY` 时，标记为 `llm` 的用例会自动跳过，CI 中也能安全运行。
